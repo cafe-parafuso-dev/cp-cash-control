@@ -1,122 +1,120 @@
-# 🛒 Sistema de Controle de Caixa — Café & Parafuso
+# hb-cashier-service (Backend) - Ecossistema Hubinity - Planned
 
-> Parte do ecossistema **Café & Parafuso** · Desenvolvido por alunos do Curso Técnico em Informática
-
----
-
-## 📌 Sobre o Projeto
-
-O Sistema de Controle de Caixa é o **módulo financeiro e administrativo** do Café & Parafuso. Ele é responsável por **receber os pedidos finalizados** vindos do Carrinho de Compras, **registrar cada venda** e **gerar relatórios gerenciais** que ajudam o dono do negócio a tomar decisões. <br><br>
-Pense neste sistema como o **“livro-caixa digital”** da lanchonete: ele não processa vendas direta‐
-mente — quem faz isso é o Carrinho. O Caixa **registra, organiza e analisa** os dados dessas vendas.
-
-**Este sistema se integra com:**
-- [X] Sistema de Carrinho de Compras
-- [X] Sistema Principal (Café & Parafuso)
-- [X] Sistema de Controle de Chamados
-- [ ] Sistema de Catálogo de Produtos
+> Parte integrante do ecossistema distribuído Hubinity.
+> ⚠️ **Status atual: Planned** — código de implementação ainda não foi escrito. Este README descreve o papel arquitetural pretendido conforme PRD seção 4 e roadmap em `docs/phases/`.
 
 ---
 
-## 🚀 Escopo Funcional (Alto Nível)
+## 💻 Visão Geral
 
-- [ ] Recepção de Pedidos Finalizados
-- [ ] Registro de Vendas
-- [ ] Relatórios Gerenciais
-- [ ] Painel Administrativo
+- **O que faz:** Livro-caixa centralizado da HiBit. Recebe lançamentos manuais (entradas e saídas avulsas pelo operador) e lançamentos automáticos via eventos publicados por outros serviços (`OrderPaid` do `sc-order-service`, `ServiceRevenueGenerated` do `hb-support-service`). Emite relatórios por período, categoria e origem; gere sessões de caixa com conciliação esperado vs realizado.
+- **Problema que resolve:** elimina a consolidação financeira manual em planilhas — vendas do totem e receita de serviços técnicos vão direto pro caixa, sem digitação dupla nem retrabalho diário.
+- **Posicionamento no Ecossistema:** consumidor central de eventos financeiros do grupo HiBit + Star Coffee. É o **sink** dos fluxos de receita; não publica eventos de negócio.
 
----
+## 🏗️ Papel na Arquitetura
 
-## 🛠️ Tecnologias
+- **Tipo de Componente:** Microsserviço Spring Boot, database-per-service (Postgres dedicado no Supabase), event-driven na ingestão.
+- **Responsabilidades Principais (planejadas):**
+  - CRUD de `LedgerEntry` (CREDIT/DEBIT) com idempotência por `(source, sourceRefId)`.
+  - Hierarquia de `LedgerCategory` (categoria → subcategoria).
+  - Ciclo de vida de `CashSession` (abertura → fechamento → conciliação).
+  - Job noturno materializa `daily_summary` para relatórios rápidos.
+  - Consumidores idempotentes para `OrderPaid`, `OrderCancelled` (estorno) e `ServiceRevenueGenerated`.
+- **Limites e Fronteiras (Boundaries):** não originar vendas, não falar com gateway de pagamento, não tocar estoque. Apenas registrar movimento financeiro e calcular agregados.
 
-| Camada | Tecnologia | Versão Recomendada |
-|---|---|---|
-| Linguagem | Java | 17+ |
-| Framework | Spring Boot | 4.0.6 |
-| Template Engine | Thymeleaf | 3.1.5 |
-| Banco de Dados | PostgreSQL | 15+ |
-| ORM | Spring Data JPA / Hibernate | - |
-| Build Tool | Maven | 3.9+ |
-| FrontEnd | HTML5 + CSS3 + TailwindCSS 4 | - |
-| Servidor | Tomcat Embedded (Spring Boot) | - |
-| Controle de versão | Git + GitHub | - |
+## 🔗 Dependências e Comunicação (Planejadas)
 
----
+### Serviços Internos da Hubinity
 
-## 📁 Estrutura do Projeto
+- **`sc-order-service`** — consome `order.events.OrderPaid` (gera CREDIT) e `order.events.OrderCancelled` (gera DEBIT de estorno) via RabbitMQ, queue `hb-cashier.orders`.
+- **`hb-support-service`** — consome `support.events.ServiceRevenueGenerated` (gera CREDIT) via RabbitMQ, queue `hb-cashier.support`.
+- **`platform-iam` (Keycloak)** — valida JWTs da realm `hibit`, roles `admin` e `operador-caixa`.
+- **`platform-shared-contracts`** — depende dos artefatos Maven `com.hubinity:contracts-cashier:0.1.0-SNAPSHOT` e `com.hubinity:contracts-events:0.1.0-SNAPSHOT`.
 
-```
-cp-cash-control/
-├── src/
-│   ├── main/
-│   │   ├── java/
-│   │   │   └── br/com/cp-cash-control/paybox/
-│   │   │       ├── controller/          ← Controladores (recebem requisições)
-│   │   │       │   ├── web/             ← Controllers do painel administrativo
-│   │   │       │   └── api/             ← Controllers da API REST
-|   │   │       ├── service/             ← Regras de negócio
-│   │   │       │   ├── VendaService     ← Registro e consulta de vendas
-│   │   │       │   └── RelatorioService ← Geração de relatórios
-|   │   │       ├── repository/          ← Acesso ao banco de dados
-|   │   │       ├── model/               ← Entidades (Produto, Categoria)
-|   │   │       └── dto/                 ← Objetos de transferência de dados
-|   |   └── resources/
-│   │       ├── static/                  ← Arquivos estáticos (CSS, JS)
-│   │       ├── templates/               ← Páginas Thymeleaf (HTML)
-│   │       │   ├── painel.html          ← Dashboard principal
-│   │       │   ├── vendas.html          ← Lista de vendas com filtros
-│   │       │   └── relatorios.html      ← Telas de relatórios
-│   │       └── application.properties   ← Configurações do sistema
-│   └── test/
-├── docs/
-├── .gitignore
-├── CONTRIBUTING.md
-├── pom.xml                              ← Dependências do projeto (Maven)     
-└── README.md
-```
+### Infraestrutura e Serviços Externos
 
----
+- **Supabase** — projeto Postgres dedicado `hb-cashier` (plano Free, 500MB), conexão via Supavisor com `sslmode=require`.
+- **CloudAMQP** — instância RabbitMQ compartilhada do ecossistema (plano Little Lemur).
+- **Railway** — host de deploy (Hobby recomendado para evitar hibernação).
 
-## ▶️ Como Executar
+## 🛠️ Tecnologias e Ferramentas (Stack Prevista)
+
+| Camada | Tecnologia | Versão |
+| :--- | :--- | :--- |
+| Linguagem | Java | 21 (LTS) |
+| Build | Maven | 3.9+ |
+| Framework | Spring Boot | 4.1 |
+| Módulos Spring | Web, Data JPA, Flyway, AMQP, Security, Resource Server, Cache | — |
+| Cache local | Caffeine | última estável |
+| Mapper DTO ↔ Entity | MapStruct | 1.6 |
+| Resiliência | Resilience4j | última estável |
+| Banco | PostgreSQL (Supabase) | 15+ |
+| Broker | RabbitMQ (CloudAMQP) | 3.x |
+| Testes | JUnit 5 + Testcontainers (Postgres + RabbitMQ) | última estável |
+| Container | Docker (multi-stage) | — |
+
+## 📐 Padrões de Projeto e Arquitetura do Código (Previstos)
+
+- **Estilo Arquitetural:** Hexagonal/Ports & Adapters dentro de um microsserviço; ingestão event-driven + APIs REST síncronas para escrita manual e leitura de relatórios.
+- **Padrões Relevantes:**
+  - **Idempotent Consumer** — `sourceRefId` único por `source` na tabela `processed_messages` impede duplicação de `LedgerEntry` se o broker reentregar.
+  - **Materialized View** — agregado `daily_summary` populado por job `@Scheduled` noturno; relatórios leem da materialização, não recalculam ao vivo além de janela curta.
+  - **Database-per-service** — Postgres exclusivo, sem FK cross-service; `sourceRefId` é string opaca.
+  - **Conventional Commits** + `release-please` para versionamento.
+
+## 🗺️ Roadmap & Posição no Board
+
+- **Fase do PRD:** Fase 2 — Caixa Manual (PRD seção 9).
+- **Tasks no board:**
+  - `2.1` — Bootstrap (Spring Boot 4.1 + dependências).
+  - `2.2` — Flyway: `ledger_entry`, `ledger_category`, `cash_session`, `processed_messages`.
+  - `2.3` — CRUD ledger + categoria + sessões + testes.
+  - `2.4` — Relatórios por período + agregação `daily_summary`.
+  - `2.5` — Skeleton dos consumers (filas criadas, handlers vazios prontos para Fase 3/4).
+  - `2.9` — E2E + CI + deploy.
+- **Dependências bloqueadoras:** Fase 0 (fundação) concluída ✓. `platform-shared-contracts` precisa expor schema mínimo de `contracts-cashier`. Os handlers reais dos eventos só ficam funcionais quando `sc-order-service` (Fase 3) e `hb-support-service` (Fase 4) começarem a publicar.
+
+## ⚙️ Variáveis de Ambiente (Previstas)
 
 ```bash
-# 1. Clone o repositório
-git clone https://github.com/SEU_USUARIO/cp-cash-control.git
+# App
+SPRING_PROFILES_ACTIVE=staging
+SERVER_PORT=8081
 
-# 2. Acesse a pasta
-cd cp-cash-control
+# Banco — Supabase (projeto hb-cashier)
+SPRING_DATASOURCE_URL=jdbc:postgresql://<host>.pooler.supabase.com:6543/postgres?sslmode=require
+SPRING_DATASOURCE_USERNAME=
+SPRING_DATASOURCE_PASSWORD=
 
-# 3. Execute o projeto
-# (instruções específicas da equipe)
+# Broker — CloudAMQP
+SPRING_RABBITMQ_HOST=
+SPRING_RABBITMQ_PORT=5671
+SPRING_RABBITMQ_USERNAME=
+SPRING_RABBITMQ_PASSWORD=
+SPRING_RABBITMQ_VIRTUAL_HOST=
+SPRING_RABBITMQ_SSL_ENABLED=true
+
+# IAM — Keycloak (realm hibit)
+KEYCLOAK_ISSUER_URI=https://iam.hubinity.app/realms/hibit
 ```
 
----
+## 🚀 Como Será Executado (Quando Implementado)
 
-## 🤝 Como Contribuir
+### Pré-requisitos
 
-Leia o arquivo [CONTRIBUTING.md](./CONTRIBUTING.md) antes de qualquer alteração.
+- JDK 21, Maven 3.9+
+- Stack local de `platform-infra` (`make up`) com Postgres + RabbitMQ + Keycloak
+- Acesso ao GitHub Packages para baixar `com.hubinity:contracts-*`
 
----
+### Execução (Será disponível após bootstrap da Fase 2)
 
-## 👥 Equipe
+```bash
+# Local com docker-compose do platform-infra rodando
+SPRING_PROFILES_ACTIVE=local mvn spring-boot:run
 
-| Nome | Função |
-|---|---|
-| André Souza | Desenvolvedor |
-| Daniel Barbosa | Desenvolvedor |
-| Débora Silva | Desenvolvedora |
-| Evaldo Oliveira | Desenvolvedor |
-| Gabriela Nascimento | Desenvolvedora |
-| Luis dos Reis | Desenvolvedor |
-| Natan Ferreira | Desenvolvedor |
-| Saulo Mendes | Desenvolvedor |
-| Sthephany Simões | Desenvolvedora |
-| Victoria de Souza | Desenvolvedora |
+# Testes (unit + Testcontainers)
+mvn -B verify
 
-**Orientador:** Lenoln Muniz · [LinkedIn](https://linkedin.com/in/lenoln-io)
-
----
-
-## 📄 Licença
-
-Este projeto é de uso educacional, desenvolvido como projeto integrador do Curso Técnico em Informática.
+# Build do container
+docker build -t ghcr.io/hubinity/hb-cashier-service:dev .
+```
